@@ -1,0 +1,109 @@
+# Production-ish single-host stack: no bind mounts, no --reload.
+# Usage: cp .env.example .env  # then set JWT_SECRET, ENVIRONMENT, CORS, NEXT_PUBLIC_API_URL
+#        docker compose -f docker-compose.prod.yml --env-file .env up --build -d
+# Full notes: docs/DEPLOY.md
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: northband
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-northband}
+      POSTGRES_DB: northband
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U northband"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: ./apps/api
+    restart: unless-stopped
+    init: true
+    env_file:
+      - .env
+    environment:
+      ENVIRONMENT: production
+      DATABASE_URL: postgresql+asyncpg://northband:${POSTGRES_PASSWORD:-northband}@postgres:5432/northband
+      DATABASE_URL_SYNC: postgresql+psycopg://northband:${POSTGRES_PASSWORD:-northband}@postgres:5432/northband
+      REDIS_URL: redis://redis:6379/0
+      UPLOAD_DIR: /app/uploads
+    ports:
+      - "8000:8000"
+    volumes:
+      - uploads:/app/uploads
+      - hfcache:/root/.cache/huggingface
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+  worker:
+    build:
+      context: ./apps/api
+    restart: unless-stopped
+    init: true
+    env_file:
+      - .env
+    environment:
+      ENVIRONMENT: production
+      DATABASE_URL: postgresql+asyncpg://northband:${POSTGRES_PASSWORD:-northband}@postgres:5432/northband
+      DATABASE_URL_SYNC: postgresql+psycopg://northband:${POSTGRES_PASSWORD:-northband}@postgres:5432/northband
+      REDIS_URL: redis://redis:6379/0
+      UPLOAD_DIR: /app/uploads
+    volumes:
+      - uploads:/app/uploads
+      - hfcache:/root/.cache/huggingface
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: arq app.worker.WorkerSettings
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile.prod
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  uploads:
+  hfcache:

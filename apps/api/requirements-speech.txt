@@ -1,0 +1,4 @@
+# Local speaking STT + listening TTS. Heavy (torch). Docker and host install via requirements.txt.
+# CI uses requirements-base.txt only. No GPU required.
+pocket-tts>=2.1.0
+faster-whisper>=1.1.0,<2

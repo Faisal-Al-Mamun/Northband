@@ -1,0 +1,37 @@
+name: API tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: apps/api/requirements-base.txt
+      - name: Install API deps (no local STT/TTS)
+        run: pip install -r requirements-base.txt
+      - name: Run pytest
+        run: pytest -q
+        env:
+          ENVIRONMENT: development
+          JWT_SECRET: ci-test-secret-not-for-production
+
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Compose files
+        run: |
+          cp .env.example .env
+          docker compose -f docker-compose.yml config --quiet
+          docker compose -f docker-compose.prod.yml --env-file .env config --quiet
